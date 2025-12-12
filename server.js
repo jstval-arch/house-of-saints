@@ -112,8 +112,8 @@ function startPolling(conversionId, clientTaskId, title, genre, apiKey) {
   
   const intervalId = setInterval(async () => {
     try {
-      // TRY 1: Default to 'audio_generation'
-      const url = `https://api.musicgpt.com/api/public/v1/byId?conversionType=audio_generation&conversion_id=${conversionId}`;
+     // FIX: Use 'MUSIC_AI' as required by the error log
+     const url = `https://api.musicgpt.com/api/public/v1/byId?conversionType=MUSIC_AI&conversion_id=${conversionId}`;
       
       const response = await fetch(url, {
         headers: { 'Authorization': apiKey }
