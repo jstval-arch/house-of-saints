@@ -105,13 +105,14 @@ app.post('/api/generate-music', async (req, res) => {
 });
 
 // ========================================
-// 4. THE POLLING ENGINE (Debug Version)
+// 4. THE POLLING ENGINE (Super Debug Mode)
 // ========================================
 function startPolling(conversionId, clientTaskId, title, genre, apiKey) {
   console.log(`⏳ Polling started for ID: ${conversionId}`);
   
   const intervalId = setInterval(async () => {
     try {
+      // TRY 1: Default to 'audio_generation'
       const url = `https://api.musicgpt.com/api/public/v1/byId?conversionType=audio_generation&conversion_id=${conversionId}`;
       
       const response = await fetch(url, {
@@ -120,11 +121,15 @@ function startPolling(conversionId, clientTaskId, title, genre, apiKey) {
 
       const data = await response.json();
 
-      // DEBUG LOG: See exactly what MusicGPT says every time
-      const currentStatus = data.conversion ? data.conversion.status : "UNKNOWN";
-      console.log(`🔎 Checking ${conversionId.substring(0,6)}... Status: ${currentStatus}`);
+      // *** SUPER DEBUG LOG ***
+      // This will show us EXACTLY why it says "UNKNOWN"
+      if (!data.success) {
+         console.log(`🚨 API ERROR for ${conversionId.substring(0,6)}:`, JSON.stringify(data));
+      } else {
+         console.log(`🔎 Status for ${conversionId.substring(0,6)}:`, data.conversion?.status);
+      }
 
-      // 1. SUCCESS CASE
+      // SUCCESS CASE
       if (data.success && data.conversion && data.conversion.status === 'COMPLETED') {
         console.log(`✅ SONG READY: ${title}`);
         
@@ -132,7 +137,7 @@ function startPolling(conversionId, clientTaskId, title, genre, apiKey) {
           id: conversionId,
           title: title,
           genre: genre,
-          audio_url: data.conversion.audio_url,
+          audio_url: data.conversion.audio_url, 
           duration: 200,
           album_art: `https://source.unsplash.com/400x400/?music,${genre.toLowerCase()}`
         };
@@ -141,15 +146,9 @@ function startPolling(conversionId, clientTaskId, title, genre, apiKey) {
         clearInterval(intervalId);
         activePolls.delete(conversionId);
       }
-      // 2. FAILURE CASE (Fixed to check inner status)
-      else if (data.success === false || (data.conversion && data.conversion.status === 'FAILED')) {
-         console.log(`❌ Generation Failed for ${conversionId}: ${data.message || "Unknown error"}`);
-         clearInterval(intervalId);
-         activePolls.delete(conversionId);
-      }
-
+      
     } catch (err) {
-      console.error(`Polling error for ${conversionId}:`, err.message);
+      console.error(`Polling network error:`, err.message);
     }
   }, 10000); // Check every 10 seconds
 
@@ -158,9 +157,8 @@ function startPolling(conversionId, clientTaskId, title, genre, apiKey) {
     if (activePolls.has(conversionId)) {
       clearInterval(activePolls.get(conversionId));
       activePolls.delete(conversionId);
-      console.log(`⚠️ Timeout stopping poll for ${conversionId}`);
     }
-  }, 600000); // 10 minute timeout
+  }, 600000);
 }
 
 // ========================================
