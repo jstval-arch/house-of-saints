@@ -15,11 +15,11 @@ app.use(cors());
 // Store active music generation tasks
 const activeTasks = new Map();
 
-// Serve static files
+// Serve static files (Your frontend)
 app.use(express.static('public'));
 
 // ========================================
-// CLAUDE LYRIC GENERATION (Server-side, no CORS!)
+// 1. CLAUDE LYRIC GENERATION
 // ========================================
 app.post('/api/generate-lyrics-claude', async (req, res) => {
   const { prompt, genre, anthropicApiKey } = req.body;
@@ -33,21 +33,20 @@ app.post('/api/generate-lyrics-claude', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-20250514', // Or current model
         max_tokens: 1500,
         messages: [{
           role: 'user',
-          content: `Write ${genre} song lyrics based on this theme: ${prompt}
-
-Format with clear verse/chorus structure. Make it authentic to the ${genre} genre.
-Keep it to about 3-4 verses with choruses. Make it singable and emotionally resonant.`
+          content: `Write ${genre} song lyrics based on this theme: ${prompt}. Format with clear verse/chorus structure.`
         }]
       })
     });
 
     const data = await response.json();
+    // Handle potential API errors gracefully
+    if (data.error) throw new Error(data.error.message);
+    
     const lyrics = data.content[0].text;
-
     res.json({ success: true, lyrics });
   } catch (error) {
     console.error('Claude API error:', error);
@@ -56,7 +55,7 @@ Keep it to about 3-4 verses with choruses. Make it singable and emotionally reso
 });
 
 // ========================================
-// OPENAI LYRIC GENERATION (Server-side, no CORS!)
+// 2. OPENAI LYRIC GENERATION
 // ========================================
 app.post('/api/generate-lyrics-openai', async (req, res) => {
   const { prompt, genre, openaiApiKey } = req.body;
@@ -73,17 +72,15 @@ app.post('/api/generate-lyrics-openai', async (req, res) => {
         max_tokens: 1500,
         messages: [{
           role: 'user',
-          content: `Write ${genre} song lyrics based on this theme: ${prompt}
-
-Format with clear verse/chorus structure. Make it authentic to the ${genre} genre.
-Keep it to about 3-4 verses with choruses. Make it singable and emotionally resonant.`
+          content: `Write ${genre} song lyrics based on this theme: ${prompt}. Format with clear verse/chorus structure.`
         }]
       })
     });
 
     const data = await response.json();
-    const lyrics = data.choices[0].message.content;
+    if (data.error) throw new Error(data.error.message);
 
+    const lyrics = data.choices[0].message.content;
     res.json({ success: true, lyrics });
   } catch (error) {
     console.error('OpenAI API error:', error);
@@ -92,14 +89,16 @@ Keep it to about 3-4 verses with choruses. Make it singable and emotionally reso
 });
 
 // ========================================
-// MUSICGPT GENERATION WITH WEBHOOK
+// 3. MUSICGPT GENERATION (UPDATED)
 // ========================================
 app.post('/api/generate-music', async (req, res) => {
   const { prompt, music_style, lyrics, make_instrumental, musicGptApiKey, taskId } = req.body;
 
   try {
-    // Get the server's public URL for webhook
+    // FIX 1: Force HTTPS URL so Render doesn't block it
     const webhookUrl = 'https://house-of-saints.onrender.com/api/webhook/musicgpt';
+
+    console.log(`🚀 Submitting to MusicGPT with webhook: ${webhookUrl}`);
 
     const response = await fetch('https://api.musicgpt.com/api/public/v1/MusicAI', {
       method: 'POST',
@@ -112,19 +111,20 @@ app.post('/api/generate-music', async (req, res) => {
         music_style,
         lyrics,
         make_instrumental: make_instrumental || false,
-        webhook_url: webhookUrl  // ← This is the magic!
+        webhook_url: webhookUrl 
       })
     });
 
     const data = await response.json();
 
     if (data.success) {
-      // Store task info for webhook lookup
+      // Store task info for when the webhook comes back
       activeTasks.set(data.task_id, {
         clientTaskId: taskId,
         timestamp: Date.now(),
         genre: music_style,
-        title: req.body.title || `${music_style} Song`
+        title: req.body.title || `${music_style} Song`,
+        musicGptApiKey: musicGptApiKey // Store key to use in webhook
       });
 
       res.json({ success: true, ...data });
@@ -138,103 +138,78 @@ app.post('/api/generate-music', async (req, res) => {
 });
 
 // ========================================
-// WEBHOOK ENDPOINT - MusicGPT calls this when done!
+// 4. WEBHOOK RECEIVER (FIXED & IMPROVED)
 // ========================================
 app.post('/api/webhook/musicgpt', async (req, res) => {
-  console.log('🎵 Webhook received from MusicGPT!', req.body);
-
-  const { task_id, conversion_id_1, conversion_id_2, status } = req.body;
-
-  // Acknowledge receipt immediately
+  // Acknowledge receipt immediately (important for webhooks!)
   res.sendStatus(200);
 
-  if (status === 'completed') {
-    const taskInfo = activeTasks.get(task_id);
+  try {
+    const { task_id, conversion_id, status, conversion_type } = req.body;
+    console.log(`🎵 Webhook Hit! Task: ${task_id}, Status: ${status}`);
 
-    if (taskInfo) {
-      // Fetch the actual audio URLs
-      try {
-        const musicGptApiKey = req.headers.authorization; // You'll need to store this
+    // We only care about COMPLETED AUDIO tasks
+    if (status === 'completed' && conversion_type === 'audio_generation') {
+      const taskInfo = activeTasks.get(task_id);
 
-        const [resp1, resp2] = await Promise.all([
-          fetch(`https://api.musicgpt.com/api/public/v1/byId?conversionType=audio_generation&conversion_id=${conversion_id_1}`, {
-            headers: { 'Authorization': musicGptApiKey }
-          }),
-          fetch(`https://api.musicgpt.com/api/public/v1/byId?conversionType=audio_generation&conversion_id=${conversion_id_2}`, {
-            headers: { 'Authorization': musicGptApiKey }
-          })
-        ]);
+      if (!taskInfo) {
+        console.log(`⚠️ Warning: Task ID ${task_id} not found in memory (Server may have restarted).`);
+        return;
+      }
 
-        const [data1, data2] = await Promise.all([resp1.json(), resp2.json()]);
+      // Fetch the actual audio URL
+      const response = await fetch(`https://api.musicgpt.com/api/public/v1/byId?conversionType=audio_generation&conversion_id=${conversion_id}`, {
+        headers: { 'Authorization': taskInfo.musicGptApiKey }
+      });
 
-        if (data1.success && data2.success) {
-          const tracks = [
-            {
-              id: Date.now() + '-v1',
-              title: `${taskInfo.title} (Version 1)`,
-              genre: taskInfo.genre,
-              audio_url: data1.conversion.conversion_path,
-              duration: data1.conversion.conversion_duration,
-              album_art: `https://source.unsplash.com/400x400/?music,${taskInfo.genre.toLowerCase()}`
-            },
-            {
-              id: Date.now() + '-v2',
-              title: `${taskInfo.title} (Version 2)`,
-              genre: taskInfo.genre,
-              audio_url: data2.conversion.conversion_path,
-              duration: data2.conversion.conversion_duration,
-              album_art: `https://source.unsplash.com/400x400/?music,${taskInfo.genre.toLowerCase()},2`
-            }
-          ];
+      const data = await response.json();
 
-          // Send to all connected clients via WebSocket
-          io.emit('music-ready', {
-            clientTaskId: taskInfo.clientTaskId,
-            tracks
-          });
+      if (data.success) {
+        const track = {
+          id: conversion_id,
+          title: `${taskInfo.title}`,
+          genre: taskInfo.genre,
+          audio_url: data.conversion.conversion_path,
+          duration: data.conversion.conversion_duration,
+          album_art: `https://source.unsplash.com/400x400/?music,${taskInfo.genre.toLowerCase()}`,
+          timestamp: Date.now()
+        };
 
-          console.log('✅ Music sent to clients!', tracks);
+        // FIX 2: Send track IMMEDIATELY to frontend
+        io.emit('music-ready', {
+          clientTaskId: taskInfo.clientTaskId,
+          tracks: [track]
+        });
 
-          // Clean up
-          activeTasks.delete(task_id);
-        }
-      } catch (error) {
-        console.error('Error fetching music:', error);
+        console.log(`✅ Success! Sent track to client: ${track.title}`);
       }
     }
+  } catch (error) {
+    console.error('Webhook processing error:', error);
   }
 });
 
 // ========================================
-// WEBSOCKET CONNECTION
+// 5. WEBSOCKET CONNECTION
 // ========================================
 io.on('connection', (socket) => {
   console.log('✅ Client connected:', socket.id);
-
-  socket.on('disconnect', () => {
-    console.log('❌ Client disconnected:', socket.id);
-  });
+  socket.on('disconnect', () => console.log('❌ Client disconnected:', socket.id));
 });
 
-// ========================================
-// HEALTH CHECK
-// ========================================
+// Health Check (Keeps server awake)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', activeTasks: activeTasks.size });
 });
 
-// ========================================
-// START SERVER
-// ========================================
+// Start Server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`
-🎵 House of Saints Music Server
-================================
-Server running on port ${PORT}
-WebSocket ready for connections
-Webhook endpoint: /api/webhook/musicgpt
-
-Ready to generate music! 🚀
+  🎵 HOUSE OF SAINTS SERVER RUNNING!
+  ==================================
+  URL: https://house-of-saints.onrender.com
+  PORT: ${PORT}
+  WEBHOOK: https://house-of-saints.onrender.com/api/webhook/musicgpt
   `);
 });
