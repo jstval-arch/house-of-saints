@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>House of Saints - Groove Studio</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; }
+        @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .toast { position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 24px; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); animation: slideIn 0.3s ease-out; z-index: 10000; font-family: 'Inter', sans-serif; font-weight: 600; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // Change this to your deployed server URL
+        const SERVER_URL = window.location.hostname === 'localhost' 
+          ? 'http://localhost:3000' 
+          : window.location.origin;
+
+        // Icons
+        const Music = ({ size = 24 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>;
+        const Trash2 = ({ size = 24 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
+        const Download = ({ size = 24 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>;
+        const Sparkles = ({ size = 24 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>;
+
+        const storage = {
+            get: (key) => { try { const item = sessionStorage.getItem(key); return item ? { value: item } : null; } catch { return null; } },
+            set: (key, value) => { try { sessionStorage.setItem(key, value); return { key, value }; } catch { return null; } },
+            delete: (key) => { try { sessionStorage.removeItem(key); return { deleted: true }; } catch { return null; } },
+            list: (prefix) => { try { const keys = []; for (let i = 0; i < sessionStorage.length; i++) { const key = sessionStorage.key(i); if (key.startsWith(prefix)) keys.push(key); } return { keys }; } catch { return { keys: [] }; } }
+        };
+
+        const genres = [
+            { id: 'rnb', name: 'R&B', color: '#E74C3C', gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', image: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=400' },
+            { id: 'gospel', name: 'Gospel', color: '#F39C12', gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400' },
+            { id: 'konpa', name: 'Konpa', color: '#E67E22', gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', image: 'https://images.unsplash.com/photo-1514320291840-2e0a9bf2a9ae?w=400' },
+            { id: 'reggae', name: 'Reggae', color: '#27AE60', gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', image: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400' },
+            { id: 'dancehall', name: 'Dancehall', color: '#3498DB', gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', image: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400' },
+            { id: 'afrobeat', name: 'Afrobeat', color: '#9B59B6', gradient: 'linear-gradient(135deg, #fccb90 0%, #d57eeb 100%)', image: 'https://images.unsplash.com/photo-1571330735066-03aaa9429d89?w=400' }
+        ];
+
+        const App = () => {
+            const [selectedGenre, setSelectedGenre] = useState(null);
+            const [songTitle, setSongTitle] = useState('');
+            const [lyrics, setLyrics] = useState('');
+            const [prompt, setPrompt] = useState('');
+            const [anthropicApiKey, setAnthropicApiKey] = useState('');
+            const [openaiApiKey, setOpenaiApiKey] = useState('');
+            const [musicGptApiKey, setMusicGptApiKey] = useState('');
+            const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+            const [generatedTracks, setGeneratedTracks] = useState([]);
+            const [isGeneratingLyrics, setIsGeneratingLyrics] = useState(false);
+            const [isGeneratingMusic, setIsGeneratingMusic] = useState(false);
+            const [pendingTasks, setPendingTasks] = useState([]);
+            const [toast, setToast] = useState(null);
+            const socketRef = useRef(null);
+
+            // WebSocket connection
+            useEffect(() => {
+                const socket = io(SERVER_URL);
+                socketRef.current = socket;
+
+                socket.on('connect', () => {
+                    console.log('✅ Connected to server');
+                });
+
+                socket.on('music-ready', (data) => {
+                    console.log('🎵 Music ready!', data);
+                    
+                    // Add tracks
+                    data.tracks.forEach(track => {
+                        storage.set(`track:${track.id}`, JSON.stringify(track));
+                    });
+                    setGeneratedTracks(prev => [...data.tracks, ...prev]);
+                    
+                    // Remove from pending
+                    setPendingTasks(prev => prev.filter(t => t !== data.clientTaskId));
+                    
+                    // Show toast
+                    showToast(`🎵 ${data.tracks[0].title.replace(' (Version 1)', '')} is ready!`);
+                });
+
+                return () => socket.disconnect();
+            }, []);
+
+            // Load API keys and tracks
+            useEffect(() => {
+                const anthKey = storage.get('anthropic_api_key');
+                const openKey = storage.get('openai_api_key');
+                const musicKey = storage.get('musicgpt_api_key');
+                if (anthKey) setAnthropicApiKey(anthKey.value);
+                if (openKey) setOpenaiApiKey(openKey.value);
+                if (musicKey) setMusicGptApiKey(musicKey.value);
+
+                const trackResult = storage.list('track:');
+                if (trackResult?.keys) {
+                    const tracks = trackResult.keys.map(key => {
+                        const data = storage.get(key);
+                        return data ? JSON.parse(data.value) : null;
+                    }).filter(Boolean).sort((a, b) => b.timestamp - a.timestamp);
+                    setGeneratedTracks(tracks);
+                }
+            }, []);
+
+            const showToast = (message) => {
+                setToast(message);
+                setTimeout(() => setToast(null), 4000);
+            };
+
+            const generateLyrics = async (provider) => {
+                if (!prompt.trim()) {
+                    alert('Please enter a theme/prompt for your lyrics!');
+                    return;
+                }
+
+                const apiKey = provider === 'claude' ? anthropicApiKey : openaiApiKey;
+                if (!apiKey) {
+                    setShowApiKeyInput(true);
+                    alert(`Please enter your ${provider === 'claude' ? 'Anthropic' : 'OpenAI'} API key first!`);
+                    return;
+                }
+
+                setIsGeneratingLyrics(true);
+                try {
+                    const response = await fetch(`${SERVER_URL}/api/generate-lyrics-${provider}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            prompt,
+                            genre: selectedGenre.name,
+                            [provider === 'claude' ? 'anthropicApiKey' : 'openaiApiKey']: apiKey
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        setLyrics(data.lyrics);
+                        showToast(`✨ Lyrics generated with ${provider === 'claude' ? 'Claude' : 'GPT-4'}!`);
+                    } else {
+                        alert(`Error: ${data.error}`);
+                    }
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                } finally {
+                    setIsGeneratingLyrics(false);
+                }
+            };
+
+            const generateMusic = async () => {
+                if (!musicGptApiKey) {
+                    setShowApiKeyInput(true);
+                    alert('Please enter your MusicGPT API key!');
+                    return;
+                }
+                if (!lyrics.trim()) {
+                    alert('Please add lyrics first!');
+                    return;
+                }
+
+                const clientTaskId = `task-${Date.now()}`;
+                setIsGeneratingMusic(true);
+                setPendingTasks(prev => [...prev, clientTaskId]);
+
+                try {
+                    const response = await fetch(`${SERVER_URL}/api/generate-music`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            prompt: `Generate a ${selectedGenre.name} song that is approximately 3.5 minutes long`,
+                            music_style: selectedGenre.name,
+                            lyrics,
+                            make_instrumental: false,
+                            musicGptApiKey,
+                            taskId: clientTaskId,
+                            title: songTitle || `${selectedGenre.name} Song`
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        showToast(`✅ Submitted! Processing 3-5 min. You'll be notified!`);
+                    } else {
+                        alert(`Error: ${data.error}`);
+                        setPendingTasks(prev => prev.filter(t => t !== clientTaskId));
+                    }
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                    setPendingTasks(prev => prev.filter(t => t !== clientTaskId));
+                } finally {
+                    setIsGeneratingMusic(false);
+                }
+            };
+
+            const deleteTrack = (trackId) => {
+                storage.delete(`track:${trackId}`);
+                setGeneratedTracks(generatedTracks.filter(track => track.id !== trackId));
+            };
+
+            return (
+                <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg, #0a0a0f 0%, #1a1a2e 50%, #16213e 100%)', color: '#fff', fontFamily: '"Playfair Display", serif', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: '-50%', left: '-10%', width: '60%', height: '60%', background: 'radial-gradient(circle, rgba(138, 43, 226, 0.15) 0%, transparent 70%)', filter: 'blur(80px)', pointerEvents: 'none' }} />
+
+                    {toast && <div className="toast">{toast}</div>}
+
+                    <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '40px 20px', position: 'relative', zIndex: 1 }}>
+                        <header style={{ textAlign: 'center', marginBottom: '50px', position: 'relative' }}>
+                            <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                {anthropicApiKey && <div style={{ padding: '6px 12px', background: 'rgba(138, 43, 226, 0.2)', border: '1px solid rgba(138, 43, 226, 0.5)', borderRadius: '6px', fontSize: '11px', color: '#a78bfa', fontFamily: '"Inter", sans-serif' }}>Claude ✓</div>}
+                                {openaiApiKey && <div style={{ padding: '6px 12px', background: 'rgba(16, 185, 129, 0.2)', border: '1px solid rgba(16, 185, 129, 0.5)', borderRadius: '6px', fontSize: '11px', color: '#34d399', fontFamily: '"Inter", sans-serif' }}>GPT-4 ✓</div>}
+                                {musicGptApiKey && <div style={{ padding: '6px 12px', background: 'rgba(76, 175, 80, 0.2)', border: '1px solid rgba(76, 175, 80, 0.5)', borderRadius: '6px', fontSize: '11px', color: '#4caf50', fontFamily: '"Inter", sans-serif' }}>MusicGPT ✓</div>}
+                                <button onClick={() => setShowApiKeyInput(!showApiKeyInput)} style={{ padding: '10px 20px', background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontFamily: '"Inter", sans-serif', fontSize: '14px' }}>⚙️ Settings</button>
+                            </div>
+
+                            {showApiKeyInput && (
+                                <>
+                                    <div onClick={() => setShowApiKeyInput(false)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0, 0, 0, 0.8)', zIndex: 999 }} />
+                                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(10, 10, 15, 0.98)', border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '16px', padding: '30px', zIndex: 1000, minWidth: '500px' }}>
+                                        <h3 style={{ margin: '0 0 25px 0', fontSize: '24px', fontFamily: '"Inter", sans-serif' }}>API Settings</h3>
+                                        
+                                        <div style={{ marginBottom: '25px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '8px', fontFamily: '"Inter", sans-serif', color: '#a78bfa' }}>Anthropic API Key (for Claude lyrics)</label>
+                                            <input type="password" placeholder="sk-ant-..." value={anthropicApiKey} onChange={(e) => { setAnthropicApiKey(e.target.value); storage.set('anthropic_api_key', e.target.value); }} style={{ width: '100%', padding: '12px', background: 'rgba(138, 43, 226, 0.1)', border: '1px solid rgba(138, 43, 226, 0.3)', borderRadius: '8px', color: '#fff', fontSize: '14px', fontFamily: '"Inter", sans-serif' }} />
+                                        </div>
+
+                                        <div style={{ marginBottom: '25px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '8px', fontFamily: '"Inter", sans-serif', color: '#34d399' }}>OpenAI API Key (alternative)</label>
+                                            <input type="password" placeholder="sk-..." value={openaiApiKey} onChange={(e) => { setOpenaiApiKey(e.target.value); storage.set('openai_api_key', e.target.value); }} style={{ width: '100%', padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', color: '#fff', fontSize: '14px', fontFamily: '"Inter", sans-serif' }} />
+                                        </div>
+
+                                        <div style={{ marginBottom: '25px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '8px', fontFamily: '"Inter", sans-serif', color: '#4caf50' }}>MusicGPT API Key</label>
+                                            <input type="password" placeholder="Your MusicGPT key..." value={musicGptApiKey} onChange={(e) => { setMusicGptApiKey(e.target.value); storage.set('musicgpt_api_key', e.target.value); }} style={{ width: '100%', padding: '12px', background: 'rgba(76, 175, 80, 0.1)', border: '1px solid rgba(76, 175, 80, 0.3)', borderRadius: '8px', color: '#fff', fontSize: '14px', fontFamily: '"Inter", sans-serif' }} />
+                                        </div>
+
+                                        <button onClick={() => setShowApiKeyInput(false)} style={{ width: '100%', padding: '12px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontFamily: '"Inter", sans-serif', fontSize: '14px', fontWeight: '600' }}>Done</button>
+                                    </div>
+                                </>
+                            )}
+
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '15px', marginBottom: '10px' }}>
+                                <Music size={48} style={{ color: '#ff6b9d' }} />
+                                <h1 style={{ fontSize: '56px', margin: 0, background: 'linear-gradient(135deg, #ff6b9d, #c471f5, #12c2e9)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', fontWeight: '700', letterSpacing: '-1px' }}>House of Saints</h1>
+                            </div>
+                            <p style={{ fontSize: '24px', color: 'rgba(255, 255, 255, 0.7)', fontFamily: '"Inter", sans-serif', fontWeight: '300', letterSpacing: '3px', textTransform: 'uppercase' }}>Groove Studio</p>
+                            <p style={{ fontSize: '14px', color: 'rgba(255, 255, 255, 0.5)', fontFamily: '"Inter", sans-serif', marginTop: '10px' }}>AI-Powered Lyrics • Instant Notifications • Professional Music</p>
+                        </header>
+
+                        {/* Genres */}
+                        <div style={{ display: 'flex', gap: '15px', marginBottom: '60px', overflowX: 'auto', paddingBottom: '15px', scrollbarWidth: 'thin' }}>
+                            {genres.map((genre) => (
+                                <div key={genre.id} onClick={() => setSelectedGenre(genre)} style={{ position: 'relative', minWidth: '220px', flex: '0 0 220px', height: '140px', borderRadius: '16px', overflow: 'hidden', cursor: 'pointer', transition: 'all 0.4s', transform: selectedGenre?.id === genre.id ? 'scale(1.05)' : 'scale(1)', boxShadow: selectedGenre?.id === genre.id ? `0 20px 60px ${genre.color}40` : '0 4px 20px rgba(0,0,0,0.3)', border: selectedGenre?.id === genre.id ? `2px solid ${genre.color}` : '2px solid transparent' }}>
+                                    <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${genre.image})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+                                    <div style={{ position: 'absolute', inset: 0, background: selectedGenre?.id === genre.id ? `linear-gradient(90deg, ${genre.color}DD 0%, transparent 100%)` : 'linear-gradient(90deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.3) 100%)' }} />
+                                    <div style={{ position: 'absolute', bottom: '15px', left: '20px', right: '20px' }}>
+                                        <h3 style={{ fontSize: '28px', margin: 0, fontWeight: '700', textShadow: '0 2px 10px rgba(0,0,0,0.5)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{genre.name}</h3>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Create Section */}
+                        {selectedGenre && (
+                            <div style={{ background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(10px)', borderRadius: '24px', padding: '40px', marginBottom: '40px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                                <h2 style={{ fontSize: '28px', marginBottom: '25px', fontFamily: '"Inter", sans-serif' }}>Create Your {selectedGenre.name} Song</h2>
+                                
+                                <input type="text" placeholder="Song Title (optional)" value={songTitle} onChange={(e) => setSongTitle(e.target.value)} style={{ width: '100%', padding: '15px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '12px', color: '#fff', fontSize: '16px', fontFamily: '"Inter", sans-serif', marginBottom: '20px' }} />
+                                
+                                <input type="text" placeholder="Lyric theme/prompt (e.g., 'love and loss', 'celebration of life')" value={prompt} onChange={(e) => setPrompt(e.target.value)} style={{ width: '100%', padding: '15px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '12px', color: '#fff', fontSize: '16px', fontFamily: '"Inter", sans-serif', marginBottom: '15px' }} />
+                                
+                                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                                    <button onClick={() => generateLyrics('claude')} disabled={isGeneratingLyrics} style={{ flex: 1, padding: '12px 24px', background: isGeneratingLyrics ? 'rgba(128,128,128,0.3)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', border: 'none', borderRadius: '10px', color: '#fff', fontSize: '15px', fontWeight: '600', cursor: isGeneratingLyrics ? 'not-allowed' : 'pointer', fontFamily: '"Inter", sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', opacity: isGeneratingLyrics ? 0.5 : 1 }}>
+                                        <Sparkles size={18} />{isGeneratingLyrics ? 'Generating...' : 'Generate with Claude'}
+                                    </button>
+                                    <button onClick={() => generateLyrics('openai')} disabled={isGeneratingLyrics} style={{ flex: 1, padding: '12px 24px', background: isGeneratingLyrics ? 'rgba(128,128,128,0.3)' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)', border: 'none', borderRadius: '10px', color: '#fff', fontSize: '15px', fontWeight: '600', cursor: isGeneratingLyrics ? 'not-allowed' : 'pointer', fontFamily: '"Inter", sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', opacity: isGeneratingLyrics ? 0.5 : 1 }}>
+                                        <Sparkles size={18} />{isGeneratingLyrics ? 'Generating...' : 'Generate with GPT-4'}
+                                    </button>
+                                </div>
+
+                                <textarea value={lyrics} onChange={(e) => setLyrics(e.target.value)} placeholder="Your lyrics will appear here, or write your own..." style={{ width: '100%', height: '250px', padding: '20px', background: 'rgba(0, 0, 0, 0.3)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '12px', color: '#fff', fontSize: '15px', fontFamily: '"Inter", sans-serif', lineHeight: '1.8', marginBottom: '20px', resize: 'vertical' }} />
+                                
+                                <button onClick={generateMusic} disabled={isGeneratingMusic || !lyrics.trim()} style={{ width: '100%', padding: '18px', background: isGeneratingMusic || !lyrics.trim() ? 'rgba(128,128,128,0.3)' : selectedGenre.gradient, border: 'none', borderRadius: '12px', color: '#fff', fontSize: '18px', fontWeight: '700', cursor: isGeneratingMusic || !lyrics.trim() ? 'not-allowed' : 'pointer', fontFamily: '"Inter", sans-serif', opacity: isGeneratingMusic || !lyrics.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                                    <Music size={22} />
+                                    {isGeneratingMusic ? 'Submitting...' : '🎵 Generate Music'}
+                                </button>
+
+                                {pendingTasks.length > 0 && (
+                                    <div style={{ background: 'rgba(99, 102, 241, 0.1)', borderRadius: '12px', padding: '15px', marginTop: '15px', textAlign: 'center', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
+                                        <div style={{ color: '#818cf8', fontFamily: '"Inter", sans-serif', fontWeight: '600', fontSize: '15px' }}>
+                                            ⏳ {pendingTasks.length} song{pendingTasks.length > 1 ? 's' : ''} generating... You'll be notified when ready!
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Tracks */}
+                        {generatedTracks.length > 0 && (
+                            <div>
+                                <h2 style={{ fontSize: '32px', marginBottom: '30px', fontFamily: '"Inter", sans-serif' }}>🎵 Your Music</h2>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '24px' }}>
+                                    {generatedTracks.map((track) => (
+                                        <div key={track.id} style={{ background: 'rgba(255, 255, 255, 0.03)', borderRadius: '20px', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                                            <div style={{ position: 'relative', paddingTop: '100%', background: `linear-gradient(135deg, ${track.color || '#667eea'}40, transparent)` }}>
+                                                <img src={track.album_art} alt={track.title} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }} onError={(e) => e.target.style.display = 'none'} />
+                                                <div style={{ position: 'absolute', top: '15px', left: '15px', padding: '6px 12px', background: track.color || '#667eea', borderRadius: '20px', fontSize: '12px', fontWeight: '600', fontFamily: '"Inter", sans-serif' }}>{track.genre}</div>
+                                                <button onClick={() => deleteTrack(track.id)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'rgba(0, 0, 0, 0.7)', border: 'none', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#ff4444' }}>
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            </div>
+                                            <div style={{ padding: '20px' }}>
+                                                <h3 style={{ fontSize: '18px', margin: '0 0 8px 0', fontFamily: '"Inter", sans-serif', fontWeight: '600' }}>{track.title}</h3>
+                                                <p style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.5)', margin: '0 0 15px 0', fontFamily: '"Inter", sans-serif' }}>{track.duration ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, '0')}` : ''}</p>
+                                                <audio controls style={{ width: '100%', height: '40px', borderRadius: '8px', marginBottom: '12px' }}>
+                                                    <source src={track.audio_url} type="audio/mpeg" />
+                                                </audio>
+                                                <a href={track.audio_url} download={`${track.title}.mp3`} style={{ display: 'block', textAlign: 'center', padding: '10px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '8px', color: '#fff', textDecoration: 'none', fontSize: '14px', fontFamily: '"Inter", sans-serif' }}>
+                                                    <Download size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />Download MP3
+                                                </a>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
