@@ -168,6 +168,30 @@ io.on('connection', (socket) => {
   console.log('✅ Client connected:', socket.id);
 });
 
+// ========================================
+// 6. AUDIO PROXY (Bypass CORS blocking)
+// ========================================
+app.get('/api/proxy-audio', async (req, res) => {
+  const audioUrl = req.query.url;
+  if (!audioUrl) return res.status(400).send('No URL provided');
+
+  try {
+    const response = await fetch(audioUrl);
+    
+    // Forward the correct content type (likely audio/mpeg or audio/wav)
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'audio/mpeg');
+    
+    // Pipe the audio data directly to the frontend
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    res.send(buffer);
+    
+  } catch (error) {
+    console.error("Proxy error:", error);
+    res.status(500).send("Error fetching audio");
+  }
+});
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok', active_polls: activePolls.size }));
 
 const PORT = process.env.PORT || 3000;
